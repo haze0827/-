@@ -96,9 +96,9 @@ class DataProcessor:
         """총 10개 등급을 3개 그룹으로 통합 (0=고위험, 2=저위험)"""
         print("[1-5] 신용 등급을 3개 그룹으로 통합 중...")
 
-        # 1-4등급: 고위험 (High Risk) -> 0
-        # 5-7등급: 중위험 (Medium Risk) -> 1
-        # 8-10등급: 저위험 (Low Risk) -> 2
+        # 1-4등급: 신용우량 (High Risk) -> 0
+        # 5-7등급:  중간등급 (Medium Risk) -> 1
+        # 8-10등급: 신용불량 (Low Risk) -> 2
 
         def map_grade(grade):
             if grade <= 4:
@@ -112,6 +112,17 @@ class DataProcessor:
 
         print("통합된 등급 분포 (0, 1, 2):")
         print(y_zero_indexed.value_counts().sort_index())
+        # 통합된
+        # 등급
+        # 분포(0, 1, 2):
+        # KIS
+        # 신용평점 / 0A3010
+        # 0
+        # 303
+        # 1
+        # 293
+        # 2
+        # 76
 
         return y_zero_indexed
 
