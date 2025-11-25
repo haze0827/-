@@ -23,7 +23,7 @@ class ModelEvaluator:
 
         # 2. Classification Report 출력 (Recall/Precision 확인)
         print("\n--- 등급별 상세 리포트 (Classification Report) ---")
-        # target_names는 main.py에서 정의된 '고위험(0)', '중위험(1)', '저위험(2)'가 사용됩니다.
+        print("!! 0: 최우량/우량 (저위험), 2: 불량/고위험 그룹 입니다.")
         report = classification_report(y_test, y_pred, labels=labels, target_names=self.target_names, zero_division=0)
         print(report)
 

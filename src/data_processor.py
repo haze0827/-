@@ -37,12 +37,16 @@ class DataProcessor:
             return None
 
     def apply_log_transform(self, X):
-        """특이치 및 왜도 해소를 위한 로그 변환 로직"""
+        """특이치 및 왜도 해소를 위한 부호화 로그 변환 로직"""
         print("[1-2] 로그 변환 적용 중...")
+
+        # 메서드 인수로 받은 X만 사용하여 변환을 적용합니다.
         X_numeric_cols = X.select_dtypes(include=[np.number]).columns
+
         for col in X_numeric_cols:
-            if (X[col].min() >= 0):
-                X[col] = np.log1p(X[col])
+            # 부호화 로그 변환: np.sign()을 사용하여 0이나 음수에도 안전하게 로그를 적용
+            X[col] = np.sign(X[col]) * np.log1p(np.abs(X[col]))
+
         return X
 
     def apply_mice_imputation(self, X):
@@ -67,7 +71,7 @@ class DataProcessor:
             try:
                 vifs = [variance_inflation_factor(X_with_const, i) for i in range(X_with_const.shape[1])]
             except np.linalg.LinAlgError:
-                print("경고: 행렬이 특이하여 VIF 계산 중단. 변수 중복 또는 선형 종속성 의심.")
+                print("경고: 행렬이 특이하여 VIF 계산 중단.")
                 break
 
             vifs = vifs[1:]
@@ -81,7 +85,6 @@ class DataProcessor:
                 max_vif_index = vifs.index(max_vif)
                 col_to_drop = df_vif.columns[max_vif_index]
 
-                # 'VIF 기준으로 변수 선정' 단계 분석용 출력
                 print(f"제거 후보: VIF {max_vif:.2f}로 높은 컬럼 '{col_to_drop}'")
 
                 df_vif = df_vif.drop(columns=[col_to_drop])
@@ -93,36 +96,25 @@ class DataProcessor:
         return df_vif, removed_vars
 
     def aggregate_classes(self, y_series):
-        """총 10개 등급을 3개 그룹으로 통합 (0=고위험, 2=저위험)"""
+        """총 10개 등급을 3개 그룹으로 통합 (0=최우량, 2=불량)"""
         print("[1-5] 신용 등급을 3개 그룹으로 통합 중...")
 
-        # 1-4등급: 신용우량 (High Risk) -> 0
-        # 5-7등급:  중간등급 (Medium Risk) -> 1
-        # 8-10등급: 신용불량 (Low Risk) -> 2
+        # 1-4등급: 최우량/우량 (Low Risk) -> 0
+        # 5-7등급: 보통/중간 (Medium Risk) -> 1
+        # 8-10등급: 불량/고위험 (High Risk) -> 2
 
         def map_grade(grade):
             if grade <= 4:
                 return 0
             elif grade <= 7:
                 return 1
-            else:  # grade 8, 9, 10
+            else:
                 return 2
 
         y_zero_indexed = y_series.apply(map_grade)
 
         print("통합된 등급 분포 (0, 1, 2):")
         print(y_zero_indexed.value_counts().sort_index())
-        # 통합된
-        # 등급
-        # 분포(0, 1, 2):
-        # KIS
-        # 신용평점 / 0A3010
-        # 0
-        # 303
-        # 1
-        # 293
-        # 2
-        # 76
 
         return y_zero_indexed
 
@@ -134,34 +126,41 @@ class DataProcessor:
 
         # 1. 종속변수(y)와 독립변수(X) 분리 및 불필요 컬럼 제거
         y_full = df[self.target_column]
-        # KIS, Name, 신용등급(우량,불량) 등 비수치형 컬럼 제거
         X_full = df.drop(columns=[self.target_column, 'KIS', 'Name', '신용등급(우량,불량)'])
 
-        # 2. 전처리 파이프라인
-        X_features = self.apply_log_transform(X_full.copy())
-        X_features = self.apply_mice_imputation(X_features)
+        # --- 중간 단계 데이터 추적 시작 ---
+        X_original = X_full.copy()  # 1. 원본
 
-        # 3. VIF 기반 다중공선성 제거 (1차 변수 선정)
-        X_vif_selected, _ = self.remove_multicollinearity(X_features)
+        # 2. 전처리 파이프라인
+        X_log = self.apply_log_transform(X_full.copy())  # 2. 로그만
+        X_mice = self.apply_mice_imputation(X_log)  # 3. 로그 + MICE
+
+        # 4. VIF 기반 다중공선성 제거 (1차 변수 선정)
+        X_vif_selected, removed_vars = self.remove_multicollinearity(X_mice)
         y_vif_final = y_full.loc[X_vif_selected.index]
 
-        # 4. Y 버전 준비
-        y_aggregated = self.aggregate_classes(y_vif_final)  # 3개 그룹 (0, 1, 2)
-        y_original = y_vif_final  # 10개 등급 (LogReg용)
+        # 5. Y 버전 준비
+        y_aggregated = self.aggregate_classes(y_vif_final)  # 3개 그룹
+        y_original = y_vif_final  # 10개 등급
 
         print("\n전처리 완료. 학습/평가 데이터 분리 시작.")
 
-        # 5. 데이터 분리: LogReg용 (Original Y)
+        # 6. 데이터 분리: LogReg용 (Original Y)
         X_train_orig, X_test_orig, y_train_orig, y_test_orig = train_test_split(
             X_vif_selected, y_original, test_size=0.2, random_state=42, stratify=y_original
         )
 
-        # 6. 데이터 분리: RF용 (Aggregated Y)
+        # 7. 데이터 분리: RF용 (Aggregated Y)
         X_train_agg, X_test_agg, y_train_agg, y_test_agg = train_test_split(
             X_vif_selected, y_aggregated, test_size=0.2, random_state=42, stratify=y_aggregated
         )
 
+        # 8. 최종 반환 (Splits + Intermediate DFs)
         return {
             'ORIGINAL_SPLIT': (X_train_orig, X_test_orig, y_train_orig, y_test_orig),
             'AGGREGATED_SPLIT': (X_train_agg, X_test_agg, y_train_agg, y_test_agg),
+            'DF_ORIGINAL_FEATURES': X_original,  # 보고서용: 원본
+            'DF_LOG_ONLY': X_log,  # 보고서용: 로그만
+            'DF_MICE_ONLY': X_mice,  # 보고서용: 로그+MICE
+            'VIF_REMOVED_VARS': removed_vars  # 보고서용: 제거 변수 목록
         }

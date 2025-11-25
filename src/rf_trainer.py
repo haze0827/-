@@ -18,13 +18,12 @@ class RFTrainer:
         grid_search = GridSearchCV(
             estimator=rf_base,
             param_grid=param_grid,
-            scoring='recall_weighted',  # 불균형 데이터에 맞게 Recall을 최적화 목표로 설정
-            cv=3,  # 3-fold 교차 검증
+            scoring='recall_weighted',
+            cv=3,
             verbose=1,
-            n_jobs=-1  # 모든 코어 사용
+            n_jobs=-1
         )
 
-        # y_train은 3개 그룹(0, 1, 2)으로 통합된 데이터입니다.
         grid_search.fit(X_train, y_train)
 
         print("\n--- 최적 파라미터 및 성능 ---")
