@@ -104,9 +104,9 @@ class DataProcessor:
         # 8-10등급: 불량/고위험 (High Risk) -> 2
 
         def map_grade(grade):
-            if grade <= 4:
+            if grade <= 3:
                 return 0
-            elif grade <= 7:
+            elif grade <= 6:
                 return 1
             else:
                 return 2

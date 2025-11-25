@@ -58,7 +58,7 @@ def run_analysis():
     # 튜닝 범위
     param_grid = {
         'n_estimators': [100, 150, 200, 250, 300],
-        'max_features': [0.5, 0.7]
+        'max_features': [0.1, 0.25]
     }
 
     rf_trainer = RFTrainer()
