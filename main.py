@@ -64,29 +64,41 @@ def run_analysis():
     rf_trainer = RFTrainer()
     best_rf_model, best_params = rf_trainer.tune_and_train(X_train_final, y_train_agg, param_grid)
 
+    # ... (단계 3: 랜덤 포레스트 튜닝 후) ...
     # 훈련된 모델 저장
     model_save_path = 'models/random_forest_final.pkl'
     rf_trainer.save_model(best_rf_model, model_save_path)
 
     # ----------------------------------------------------
-    # 단계 4: 최종 선정 모델 평가
+    # 단계 4: 최종 선정 모델 평가 및 특성 중요도 확인 (OLS 대체 논리)
     # ----------------------------------------------------
     print("\n=============================================")
-    print("단계 4: 최종 선정 모델 평가")
+    print("단계 4: 최종 선정 모델 평가 및 특성 중요도 확인")
     print("=============================================")
 
     # 3개 그룹의 레이블 이름 정의
     # 0: 최우량/우량 (저위험), 2: 불량/고위험
     target_names = ['우량(0)', '보통(1)', '불량(2)']
+
+    # [오류 수정] ModelEvaluator 객체를 여기서 생성합니다.
     evaluator = ModelEvaluator(target_names=target_names)
 
     # 2차 선정된 X_test_final과 3개 그룹 y_test_agg를 사용합니다.
     evaluator.evaluate_model(best_rf_model, X_test_final, y_test_agg, model_name="최종 Random Forest")
 
+    # OLS를 대체하는 핵심 논리: 특성 중요도 추출
+    print("\n--- 특성 중요도 (Feature Importance) ---")
+    importances = best_rf_model.feature_importances_
+    feature_names = X_train_final.columns
+    feature_importance_df = pd.DataFrame({'Feature': feature_names, 'Importance': importances})
+    feature_importance_df = feature_importance_df.sort_values(by='Importance', ascending=False)
+
+    # VIF로 선정된 15개 변수 전체의 중요도를 출력하여 보고서에 활용합니다.
+    print("최종 모델의 예측에 가장 큰 영향을 미친 변수 목록 (OLS 대체 근거):")
+    print(feature_importance_df)
+
     print("\n=============================================")
     print("분석 완료. 핵심: Recall(재현율)과 Precision(정밀도) 균형을 확인하세요.")
     print("=============================================")
-
-
 if __name__ == "__main__":
     run_analysis()
