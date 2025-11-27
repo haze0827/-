@@ -15,7 +15,7 @@ class LogRegTrainer:
         ord_mod = OrderedModel(y_train, X_train, distr='logit')
 
         # 모델 훈련
-        res_log = ord_mod.fit(method='bfgs', maxiter=1000)
+        res_log = ord_mod.fit(method='bfgs', maxiter=5000)  # maxiter를 늘려 수렴을 유도
 
         print(res_log.summary())
 

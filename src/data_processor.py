@@ -1,4 +1,3 @@
-# src/data_processor.py
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
@@ -16,6 +15,7 @@ class DataProcessor:
         """엑셀 파일 로드 및 초기 EDA 출력"""
         print(f"[1-1] 엑셀 파일 로드 중: {self.file_path}")
         try:
+            # Note: Assume read_excel handles non-numeric data based on previous runs
             df = pd.read_excel(self.file_path, sheet_name=0)
 
             # --- 1. 초기 데이터 탐색 (EDA 출력) ---
@@ -40,7 +40,6 @@ class DataProcessor:
         """특이치 및 왜도 해소를 위한 부호화 로그 변환 로직"""
         print("[1-2] 로그 변환 적용 중...")
 
-        # 메서드 인수로 받은 X만 사용하여 변환을 적용합니다.
         X_numeric_cols = X.select_dtypes(include=[np.number]).columns
 
         for col in X_numeric_cols:
@@ -55,6 +54,7 @@ class DataProcessor:
         X_numeric = X.select_dtypes(include=[np.number])
         imputer = IterativeImputer(max_iter=10, random_state=42)
         X_imputed_array = imputer.fit_transform(X_numeric)
+        # 중요: 컬럼 이름과 인덱스를 보존하여 반환
         X_imputed = pd.DataFrame(X_imputed_array, columns=X_numeric.columns, index=X_numeric.index)
 
         print("MICE 후 결측치 재확인:", X_imputed.isnull().sum().sum())
@@ -66,9 +66,11 @@ class DataProcessor:
         df_vif = X.copy()
         removed_vars = []
         while True:
+            # statsmodels는 상수항이 필요
             X_with_const = np.column_stack([np.ones(df_vif.shape[0]), df_vif])
 
             try:
+                # VIF 계산. np.linalg.LinAlgError 방지
                 vifs = [variance_inflation_factor(X_with_const, i) for i in range(X_with_const.shape[1])]
             except np.linalg.LinAlgError:
                 print("경고: 행렬이 특이하여 VIF 계산 중단.")
@@ -102,11 +104,12 @@ class DataProcessor:
         # 1-4등급: 최우량/우량 (Low Risk) -> 0
         # 5-7등급: 보통/중간 (Medium Risk) -> 1
         # 8-10등급: 불량/고위험 (High Risk) -> 2
+        # Note: 원본 데이터의 1등급은 2개 밖에 없어 3등급까지 0으로 묶는 것이 타당함.
 
         def map_grade(grade):
-            if grade <= 3:
+            if grade <= 4:  # 1-4등급을 0으로 묶는 것이 더 일반적인 교수님 자료와 일치할 수 있음 (3개 그룹 통합 기준)
                 return 0
-            elif grade <= 6:
+            elif grade <= 7:
                 return 1
             else:
                 return 2
@@ -126,6 +129,7 @@ class DataProcessor:
 
         # 1. 종속변수(y)와 독립변수(X) 분리 및 불필요 컬럼 제거
         y_full = df[self.target_column]
+        # 중요: 이 시점에서 컬럼 이름에 공백이 없는지 확인
         X_full = df.drop(columns=[self.target_column, 'KIS', 'Name', '신용등급(우량,불량)'])
 
         # --- 중간 단계 데이터 추적 시작 ---
@@ -156,11 +160,15 @@ class DataProcessor:
         )
 
         # 8. 최종 반환 (Splits + Intermediate DFs)
+        # [KeyError 해결용] VIF 제거 후 최종 남은 변수명을 명시적으로 전달
+        final_vif_columns = X_vif_selected.columns.tolist()
+
         return {
             'ORIGINAL_SPLIT': (X_train_orig, X_test_orig, y_train_orig, y_test_orig),
             'AGGREGATED_SPLIT': (X_train_agg, X_test_agg, y_train_agg, y_test_agg),
             'DF_ORIGINAL_FEATURES': X_original,  # 보고서용: 원본
             'DF_LOG_ONLY': X_log,  # 보고서용: 로그만
             'DF_MICE_ONLY': X_mice,  # 보고서용: 로그+MICE
-            'VIF_REMOVED_VARS': removed_vars  # 보고서용: 제거 변수 목록
+            'VIF_REMOVED_VARS': removed_vars,  # 보고서용: 제거 변수 목록
+            'FINAL_VIF_COLUMNS': final_vif_columns  # 최종 컬럼 목록 전달
         }
