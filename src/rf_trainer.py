@@ -11,7 +11,7 @@ class RFTrainer:
     def tune_and_train(self, X_train, y_train, param_grid):
         print("\n--- 랜덤 포레스트 하이퍼파라미터 튜닝 (Grid Search) 시작 ---")
 
-        # class_weight='balanced'를 적용하여 불균형 문제를 해결합니다.
+        # ⭐⭐ 수정: 10개 등급 처리를 위해 'balanced' 자동 가중치로 원복 ⭐⭐
         rf_base = RandomForestClassifier(random_state=self.random_state, class_weight='balanced')
 
         # Grid Search 객체 생성
@@ -30,10 +30,8 @@ class RFTrainer:
         print(f"최적의 파라미터: {grid_search.best_params_}")
         print(f"최적 모델의 가중평균 Recall: {grid_search.best_score_:.4f}")
 
-        # 최종 모델 반환
         return grid_search.best_estimator_, grid_search.best_params_
 
     def save_model(self, model, model_path):
-        """훈련된 모델을 파일로 저장"""
         joblib.dump(model, model_path)
         print(f"모델 저장 완료: {model_path}")
