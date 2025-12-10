@@ -4,7 +4,6 @@ import numpy as np
 from src.data_processor import DataProcessor
 from src.logreg_trainer import LogRegTrainer
 from src.rf_trainer import RFTrainer
-from src.xgb_trainer import XGBTrainer  # XGBoost 다시 임포트
 from src.evaluator import ModelEvaluator
 
 
@@ -14,103 +13,77 @@ def run_analysis():
     target_col = 'KIS 신용평점/0A3010'
 
     # ----------------------------------------------------
-    # 단계 1: 데이터 전처리 및 1차 변수 선정 (VIF)
+    # 단계 1: 데이터 전처리 (파생변수 포함) 및 로드
     # ----------------------------------------------------
     print("=============================================")
-    print("단계 1: 데이터 전처리 및 1차 변수 선정 (VIF)")
+    print("단계 1: 데이터 전처리 (파생변수 생성 -> VIF -> 3개 그룹 통합)")
     print("=============================================")
     processor = DataProcessor(data_file, target_col)
     data_sets = processor.load_and_preprocess()
 
     if not data_sets:
-        print("분석을 계속할 수 없습니다.")
+        print("데이터 로드 실패.")
         return
 
-    # 원본 10개 등급 데이터셋 사용
-    X_train_orig, X_test_orig, y_train_orig, y_test_orig = data_sets['ORIGINAL_SPLIT']
+    # ⭐⭐ 핵심 변경: 3개 그룹 통합 데이터셋 사용 (AGGREGATED_SPLIT) ⭐⭐
+    # 이제 y값은 0(우량), 1(보통), 2(불량) 만 존재합니다.
+    X_train, X_test, y_train, y_test = data_sets['AGGREGATED_SPLIT']
 
     # ----------------------------------------------------
-    # 단계 2: 순서형 로지스틱 (원본 10등급 사용)
+    # 단계 2: 순서형 로지스틱 (변수 중요도 재확인 - 선택 사항)
     # ----------------------------------------------------
+    # 3개 그룹에 대해서도 어떤 변수가 유의미한지 p-value를 확인해봅니다.
     print("\n=============================================")
-    print("단계 2: 순서형 로지스틱 (원본 10등급 사용)")
+    print("단계 2: 순서형 로지스틱 (3개 그룹 기준 변수 검증)")
     print("=============================================")
 
     logreg_trainer = LogRegTrainer()
-    _, insignificant_vars = logreg_trainer.train_ordinal_model(X_train_orig, y_train_orig)
+    _, insignificant_vars = logreg_trainer.train_ordinal_model(X_train, y_train)
 
-    # 2차 변수 선정 결과 적용
+    # LogReg에서 유의하지 않다고 나온 변수 제거 (2차 변수 선정)
     if insignificant_vars:
         print(f"\n--> 2차 변수 선정 적용: {len(insignificant_vars)}개 변수 제거 ({insignificant_vars})")
-        X_train_final = X_train_orig.drop(columns=insignificant_vars, errors='ignore')
-        X_test_final = X_test_orig.drop(columns=insignificant_vars, errors='ignore')
+        X_train_final = X_train.drop(columns=insignificant_vars, errors='ignore')
+        X_test_final = X_test.drop(columns=insignificant_vars, errors='ignore')
     else:
         print("\n--> 2차 변수 선정에서 추가 제거 변수 없음.")
-        X_train_final = X_train_orig
-        X_test_final = X_test_orig
+        X_train_final = X_train
+        X_test_final = X_test
 
     # ----------------------------------------------------
-    # 단계 3: 랜덤 포레스트 튜닝 (원본 10개 등급 사용)
+    # 단계 3: 랜덤 포레스트 튜닝 (수동 가중치 적용)
     # ----------------------------------------------------
     print("\n=============================================")
-    print("단계 3: 랜덤 포레스트 튜닝 (원본 10개 등급 사용)")
+    print("단계 3: 최종 랜덤 포레스트 튜닝 (3개 그룹 + 수동 가중치)")
     print("=============================================")
 
+    # 튜닝 범위 (시간 절약과 성능 사이의 균형)
     rf_param_grid = {
-        'n_estimators': [100, 200],
+        'n_estimators': [100, 150, 200, 250],
         'max_features': [0.5, 0.7]
     }
 
     rf_trainer = RFTrainer()
-    best_rf_model, _ = rf_trainer.tune_and_train(X_train_final, y_train_orig, rf_param_grid)
-    rf_trainer.save_model(best_rf_model, 'models/random_forest_final_10grades.pkl')
+    best_rf_model, _ = rf_trainer.tune_and_train(X_train_final, y_train, rf_param_grid)
+
+    # 최종 모델 저장
+    rf_trainer.save_model(best_rf_model, 'models/final_rf_model_3groups.pkl')
 
     # ----------------------------------------------------
-    # 단계 4: 랜덤 포레스트 평가
+    # 단계 4: 최종 모델 평가
     # ----------------------------------------------------
     print("\n=============================================")
-    print("단계 4: 랜덤 포레스트 모델 평가")
+    print("단계 4: 최종 선정 모델 평가 (성공 케이스)")
     print("=============================================")
 
-    target_names_10 = [str(i) for i in sorted(y_train_orig.unique())]
-    evaluator = ModelEvaluator(target_names=target_names_10)
-    evaluator.evaluate_model(best_rf_model, X_test_final, y_test_orig, model_name="Random Forest (10등급)")
+    # 3개 그룹에 맞는 레이블 이름
+    target_names_3groups = ['우량(0)', '보통(1)', '불량(2)']
 
-    # ----------------------------------------------------
-    # 단계 5: XGBoost (L2 정규화 포함) 튜닝 및 평가
-    # ----------------------------------------------------
-    print("\n=============================================")
-    print("단계 5: XGBoost (L2 정규화) 튜닝 및 평가")
-    print("=============================================")
-
-    xgb_trainer = XGBTrainer()
-
-    # ⭐⭐ L2 정규화 파라미터 (reg_lambda) 추가 ⭐⭐
-    # reg_lambda: 값이 클수록 규제가 강해져 과적합을 방지합니다. (기본값 1)
-    xgb_param_grid = {
-        'n_estimators': [100, 200],
-        'max_depth': [3, 5],
-        'learning_rate': [0.1],
-        'reg_lambda': [1.0, 10.0, 50.0]  # <-- L2 정규화 실험
-    }
-
-    # XGBoost 훈련
-    best_xgb_model, _ = xgb_trainer.tune_and_train(X_train_final, y_train_orig, xgb_param_grid)
-    xgb_trainer.save_model(best_xgb_model, 'models/xgboost_l2_final_10grades.pkl')
-
-    # XGBoost 평가
-    print("\n--- XGBoost (L2 적용) 최종 평가 ---")
-
-    # y_test 데이터도 0~9로 변환
-    if y_test_orig.min() > 0:
-        y_test_shifted = y_test_orig - 1
-    else:
-        y_test_shifted = y_test_orig
-
-    evaluator.evaluate_model(best_xgb_model, X_test_final, y_test_shifted, model_name="XGBoost L2 (10등급)")
+    evaluator = ModelEvaluator(target_names=target_names_3groups)
+    evaluator.evaluate_model(best_rf_model, X_test_final, y_test, model_name="최종 RF (3그룹+파생변수+가중치)")
 
     print("\n=============================================")
-    print("분석 완료. L2 정규화가 불량 등급 예측(Recall)에 도움이 되었는지 확인하세요.")
+    print("분석 완료. 불량 그룹(2)의 Recall이 0.60~0.80 수준으로 회복되었는지 확인하세요.")
     print("=============================================")
 
 

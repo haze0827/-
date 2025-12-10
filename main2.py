@@ -4,7 +4,7 @@ import numpy as np
 from src.data_processor import DataProcessor
 from src.logreg_trainer import LogRegTrainer
 from src.rf_trainer import RFTrainer
-from src.xgb_trainer import XGBTrainer
+from src.xgb_trainer import XGBTrainer  # XGBTrainer 임포트 필수
 from src.evaluator import ModelEvaluator
 
 
@@ -14,103 +14,84 @@ def run_analysis():
     target_col = 'KIS 신용평점/0A3010'
 
     # ----------------------------------------------------
-    # 단계 1: 데이터 전처리 및 1차 변수 선정 (VIF)
+    # 단계 1: 데이터 전처리
     # ----------------------------------------------------
     print("=============================================")
-    print("단계 1: 데이터 전처리 및 1차 변수 선정 (VIF)")
+    print("단계 1: 데이터 전처리 (파생변수 -> 3개 그룹)")
     print("=============================================")
     processor = DataProcessor(data_file, target_col)
     data_sets = processor.load_and_preprocess()
 
-    if not data_sets:
-        print("분석을 계속할 수 없습니다.")
-        return
+    if not data_sets: return
 
-    # ⭐ 비교 실험을 위해 '원본 10개 등급' 사용 ⭐
-    X_train_orig, X_test_orig, y_train_orig, y_test_orig = data_sets['ORIGINAL_SPLIT']
+    # ⭐ 3개 그룹 통합 데이터셋 사용 ⭐
+    X_train, X_test, y_train, y_test = data_sets['AGGREGATED_SPLIT']
 
     # ----------------------------------------------------
-    # 단계 2: 순서형 로지스틱 (원본 10등급 사용)
+    # 단계 2: 순서형 로지스틱 (변수 선정용)
     # ----------------------------------------------------
     print("\n=============================================")
-    print("단계 2: 순서형 로지스틱 (원본 10등급 사용)")
+    print("단계 2: 순서형 로지스틱 (변수 검증)")
     print("=============================================")
 
     logreg_trainer = LogRegTrainer()
-    _, insignificant_vars = logreg_trainer.train_ordinal_model(X_train_orig, y_train_orig)
+    _, insignificant_vars = logreg_trainer.train_ordinal_model(X_train, y_train)
 
     if insignificant_vars:
-        print(f"\n--> 2차 변수 선정 적용: {len(insignificant_vars)}개 변수 제거 ({insignificant_vars})")
-        X_train_final = X_train_orig.drop(columns=insignificant_vars, errors='ignore')
-        X_test_final = X_test_orig.drop(columns=insignificant_vars, errors='ignore')
+        print(f"\n--> 2차 변수 선정 적용: {len(insignificant_vars)}개 변수 제거")
+        X_train_final = X_train.drop(columns=insignificant_vars, errors='ignore')
+        X_test_final = X_test.drop(columns=insignificant_vars, errors='ignore')
     else:
-        print("\n--> 2차 변수 선정에서 추가 제거 변수 없음.")
-        X_train_final = X_train_orig
-        X_test_final = X_test_orig
+        X_train_final = X_train
+        X_test_final = X_test
 
     # ----------------------------------------------------
-    # 단계 3: 랜덤 포레스트 튜닝 (비교 기준점)
+    # 단계 3: 랜덤 포레스트 (3개 그룹, 수동 가중치)
     # ----------------------------------------------------
     print("\n=============================================")
-    print("단계 3: 랜덤 포레스트 튜닝 (Baseline)")
+    print("단계 3: 랜덤 포레스트 튜닝 (3개 그룹)")
     print("=============================================")
 
-    rf_param_grid = {'n_estimators': [100], 'max_features': [0.5]}  # 빠른 실행을 위해 고정
-    rf_trainer = RFTrainer()
-    best_rf_model, _ = rf_trainer.tune_and_train(X_train_final, y_train_orig, rf_param_grid)
+    rf_param_grid = {
+        'n_estimators': [100, 200],
+        'max_features': [0.5, 0.7]
+    }
 
-    target_names_10 = [str(i) for i in sorted(y_train_orig.unique())]
-    evaluator = ModelEvaluator(target_names=target_names_10)
-    evaluator.evaluate_model(best_rf_model, X_test_final, y_test_orig, model_name="Random Forest")
+    rf_trainer = RFTrainer()
+    best_rf_model, _ = rf_trainer.tune_and_train(X_train_final, y_train, rf_param_grid)
+
+    # 평가용 레이블 이름
+    target_names_3groups = ['우량(0)', '보통(1)', '불량(2)']
+    evaluator = ModelEvaluator(target_names=target_names_3groups)
+
+    print("\n--- Random Forest (3그룹) 평가 ---")
+    evaluator.evaluate_model(best_rf_model, X_test_final, y_test, model_name="Random Forest")
 
     # ----------------------------------------------------
-    # ⭐ 단계 5-A: XGBoost (L2 미적용) ⭐
+    # ⭐ 단계 4: XGBoost (3개 그룹, L2 규제 없음) ⭐
     # ----------------------------------------------------
     print("\n=============================================")
-    print("단계 5-A: XGBoost (L2 규제 없음, reg_lambda=0)")
+    print("단계 4: XGBoost (3개 그룹, L2 규제 없음)")
     print("=============================================")
 
     xgb_trainer = XGBTrainer()
 
-    # reg_lambda = 0 으로 설정하여 규제 제거
+    # reg_lambda = 0 (L2 규제 끔)
     xgb_params_no_l2 = {
         'n_estimators': [100, 200],
         'max_depth': [3, 5],
         'learning_rate': [0.1],
-        'reg_lambda': [0]  # <--- L2 끄기
+        'reg_lambda': [0]  # <--- 핵심: L2 미적용
     }
 
-    best_xgb_no_l2, _ = xgb_trainer.tune_and_train(X_train_final, y_train_orig, xgb_params_no_l2)
-    xgb_trainer.save_model(best_xgb_no_l2, 'models/xgboost_no_l2.pkl')
+    best_xgb_model, _ = xgb_trainer.tune_and_train(X_train_final, y_train, xgb_params_no_l2)
 
-    # 평가 (0~9 변환)
-    y_test_shifted = y_test_orig - 1 if y_test_orig.min() > 0 else y_test_orig
-    evaluator.evaluate_model(best_xgb_no_l2, X_test_final, y_test_shifted, model_name="XGBoost (No L2)")
-
-    # ----------------------------------------------------
-    # ⭐ 단계 5-B: XGBoost (L2 적용) ⭐
-    # ----------------------------------------------------
-    print("\n=============================================")
-    print("단계 5-B: XGBoost (L2 규제 적용, reg_lambda 튜닝)")
-    print("=============================================")
-
-    # reg_lambda를 여러 값으로 실험
-    xgb_params_l2 = {
-        'n_estimators': [100, 200],
-        'max_depth': [3, 5],
-        'learning_rate': [0.1],
-        'reg_lambda': [1.0, 10.0, 50.0]  # <--- L2 켜기 (강도 조절)
-    }
-
-    best_xgb_l2, best_params_l2 = xgb_trainer.tune_and_train(X_train_final, y_train_orig, xgb_params_l2)
-    xgb_trainer.save_model(best_xgb_l2, 'models/xgboost_with_l2.pkl')
-
-    print(f"\n>> 결정된 최적의 L2 규제 강도: {best_params_l2['reg_lambda']}")
-
-    evaluator.evaluate_model(best_xgb_l2, X_test_final, y_test_shifted, model_name="XGBoost (With L2)")
+    print("\n--- XGBoost (3그룹, No L2) 평가 ---")
+    # XGBoost는 0, 1, 2 레이블을 그대로 사용하므로 y_test 변환 불필요 (이미 0, 1, 2임)
+    evaluator.evaluate_model(best_xgb_model, X_test_final, y_test, model_name="XGBoost (No L2)")
 
     print("\n=============================================")
-    print("분석 완료. [No L2] vs [With L2]의 불량 등급 Recall을 비교하세요.")
+    print("분석 완료. RF(수동 가중치)와 XGB(No L2) 중 불량(2) Recall이 높은 것은?")
     print("=============================================")
 
 

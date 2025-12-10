@@ -11,10 +11,19 @@ class RFTrainer:
     def tune_and_train(self, X_train, y_train, param_grid):
         print("\n--- 랜덤 포레스트 하이퍼파라미터 튜닝 (Grid Search) 시작 ---")
 
-        # ⭐⭐ 수정: 10개 등급 처리를 위해 'balanced' 자동 가중치로 원복 ⭐⭐
-        rf_base = RandomForestClassifier(random_state=self.random_state, class_weight='balanced')
+        # ⭐⭐ 핵심 전략: 3개 그룹용 수동 비용 가중치 (Cost-Sensitive Learning) ⭐⭐
+        # 0(우량): 1.0 (기본)
+        # 1(보통): 5.0 (중요도 높음)
+        # 2(불량): 20.0 (매우 치명적 - Recall 극대화 목표)
+        custom_weights = {0: 1.0, 1: 5.0, 2: 20.0}
 
-        # Grid Search 객체 생성
+        # 수동 가중치 적용
+        rf_base = RandomForestClassifier(
+            random_state=self.random_state,
+            class_weight=custom_weights
+        )
+
+        # Grid Search 설정 (Recall을 최우선으로 튜닝)
         grid_search = GridSearchCV(
             estimator=rf_base,
             param_grid=param_grid,
